@@ -20,9 +20,10 @@
 
 HANDLE startShutdownHandle;
 HANDLE endShutdownHandle;
-bool isLooping;
+volatile bool isLooping;
 
 BOOL WINAPI ConsoleHandler(DWORD);
+void HandleProcessExit(HANDLE process);
 void PrintMessage(const char* message, ...);
 void PrintSystemError(DWORD error);
 
@@ -66,7 +67,7 @@ int main(int argc, char** argv)
 				return EXIT_FAILURE;
 			}
 		}
-		HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, pid);
+		HANDLE process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
 		if (process == NULL)
 		{
 			DWORD error = GetLastError();
@@ -81,7 +82,13 @@ int main(int argc, char** argv)
 
 		if (isLooping)
 		{
-			PrintMessage("Process terminated\n");
+			HandleProcessExit(process);
+		}
+
+		CloseHandle(process);
+
+		if (isLooping)
+		{
 			WaitForSingleObject(startShutdownHandle, RESTART_DELAY);
 		}
 	}
@@ -108,13 +115,17 @@ int main(int argc, char** argv)
 		waitHandles[1] = pi.hProcess;
 
 		DWORD i = WaitForMultipleObjects(2, waitHandles, FALSE, INFINITE);
-		
+
+		if (isLooping)
+		{
+			HandleProcessExit(pi.hProcess);
+		}
+
 		CloseHandle(pi.hProcess);
 		CloseHandle(pi.hThread);
 
 		if (isLooping)
 		{
-			PrintMessage("Process terminated\n");
 			WaitForSingleObject(startShutdownHandle, RESTART_DELAY);
 		}
 	}
@@ -139,6 +150,23 @@ BOOL WINAPI ConsoleHandler(DWORD dwType)
 		return TRUE;
 	}
 	return FALSE;
+}
+
+// Prints a process terminated message including the process exit code if possible
+void HandleProcessExit(HANDLE process)
+{
+	DWORD exitCode;
+	BOOL knownExitCode = GetExitCodeProcess(process, &exitCode);
+	if (knownExitCode)
+	{
+		PrintMessage("Process terminated with code %d.\n", exitCode);
+	}
+	else
+	{
+		DWORD error = GetLastError();
+		fprintf_s(stderr, "Process terminated. Could not obtain process exit code. ");
+		PrintSystemError(error);
+	}
 }
 
 // Prints a timestamped message to stdout
